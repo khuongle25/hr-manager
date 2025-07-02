@@ -7,6 +7,7 @@ from .serializers import LeaveRequestSerializer, LeaveTypeSerializer, LeaveBalan
 from rest_framework.permissions import IsAuthenticated, SAFE_METHODS, BasePermission
 from apps.users.permissions import IsHRUser, IsTeamLeadUser, IsOwnerOrHR
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 
 class IsHROrReadOnly(BasePermission):
     def has_permission(self, request, view):
@@ -189,32 +190,20 @@ class LeaveBalanceViewSet(viewsets.ModelViewSet):
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['request'] = self.request
-        
-        # Xử lý employee cho create action
+        # Chỉ cho phép HR tạo LeaveBalance
         if self.action == 'create':
             user = self.request.user
+            if user.role != 'hr':
+                from rest_framework import serializers
+                raise serializers.ValidationError("Chỉ HR mới được tạo LeaveBalance!")
             employee_id = self.request.data.get('employee')
-            
-            if user.role == 'employee':
-                # Employee chỉ có thể tạo balance cho chính mình
-                context['_employee'] = user
-            elif user.role == 'team_lead' and employee_id:
-                # Team Lead chỉ có thể tạo balance cho nhân viên trong team
-                from apps.users.models import User
-                try:
-                    employee = User.objects.get(id=employee_id, department__lead=user)
-                    context['_employee'] = employee
-                except User.DoesNotExist:
-                    raise serializers.ValidationError("Bạn chỉ có thể tạo ngày phép cho nhân viên trong team")
-            elif user.role == 'hr' and employee_id:
-                # HR có thể tạo balance cho bất kỳ ai
+            if employee_id:
                 from apps.users.models import User
                 try:
                     employee = User.objects.get(id=employee_id)
                     context['_employee'] = employee
                 except User.DoesNotExist:
                     raise serializers.ValidationError("Không tìm thấy nhân viên")
-        
         return context
     
     def create(self, request, *args, **kwargs):
@@ -260,3 +249,18 @@ class LeaveBalanceViewSet(viewsets.ModelViewSet):
         
         # Nếu không tồn tại hoặc có lỗi, tạo mới như bình thường
         return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        if request.user.role != 'hr':
+            raise PermissionDenied("Chỉ HR mới được cập nhật LeaveBalance!")
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        if request.user.role != 'hr':
+            raise PermissionDenied("Chỉ HR mới được cập nhật LeaveBalance!")
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if request.user.role != 'hr':
+            raise PermissionDenied("Chỉ HR mới được xóa LeaveBalance!")
+        return super().destroy(request, *args, **kwargs)

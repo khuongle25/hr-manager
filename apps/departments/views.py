@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
 from apps.users.models import User
+from django.core.cache import cache
 
 class DepartmentViewSet(viewsets.ModelViewSet):
     queryset = Department.objects.all()
@@ -25,11 +26,32 @@ class DepartmentViewSet(viewsets.ModelViewSet):
             # Employee chỉ thấy phòng ban mình thuộc về
             return Department.objects.filter(members=user)
     
+    def list(self, request, *args, **kwargs):
+        user = request.user
+        if user.role == 'hr':
+            cache_key = 'departments_list_hr'
+            data = cache.get(cache_key)
+            if data is not None:
+                print('CACHE HIT')
+                return Response(data)
+            print('CACHE MISS')
+            response = super().list(request, *args, **kwargs)
+            cache.set(cache_key, response.data, timeout=300)
+            return response
+        # Team lead/employee không cache (vì dữ liệu cá nhân hóa)
+        return super().list(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         serializer.save()
+        cache.delete('departments_list_hr')
         
     def perform_update(self, serializer):
         serializer.save()
+        cache.delete('departments_list_hr')
+
+    def perform_destroy(self, instance):
+        instance.delete()
+        cache.delete('departments_list_hr')
 
     @action(detail=True, methods=['post'], url_path='assign-lead')
     def assign_lead(self, request, pk=None):
