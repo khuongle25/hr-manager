@@ -114,56 +114,108 @@ db_table Đặt tên bảng trong database (mặc định là <app_label><model_
 | indexes | Định nghĩa index nâng cao (từ Django 2.2 trở lên) |
 | constraints | Định nghĩa constraint nâng cao (từ Django 2.2 trở lên) |
 
-
 Trong Django REST Framework (DRF), có một số quy ước đặt tên phương thức trong serializer để tự động liên kết (hook) với các trường nhất định. Dưới đây là các quy ước phổ biến:
-1. get_<field_name>(self, obj)
-Dùng cho: SerializerMethodField
-Chức năng: Tự động gọi hàm này để lấy giá trị cho trường SerializerMethodField.
-Ví dụ:
-2. validate_<field_name>(self, value)
-Dùng cho: Validate từng trường riêng lẻ.
-Chức năng: Tự động gọi hàm này để kiểm tra và xử lý giá trị của trường trước khi lưu.
-Ví dụ:
+
+1. get\_<field_name>(self, obj)
+   Dùng cho: SerializerMethodField
+   Chức năng: Tự động gọi hàm này để lấy giá trị cho trường SerializerMethodField.
+   Ví dụ:
+2. validate\_<field_name>(self, value)
+   Dùng cho: Validate từng trường riêng lẻ.
+   Chức năng: Tự động gọi hàm này để kiểm tra và xử lý giá trị của trường trước khi lưu.
+   Ví dụ:
 3. to_representation(self, instance)
-Dùng cho: Tùy biến dữ liệu trả về (output) của serializer.
-Chức năng: Ghi đè toàn bộ quá trình chuyển instance thành dict.
+   Dùng cho: Tùy biến dữ liệu trả về (output) của serializer.
+   Chức năng: Ghi đè toàn bộ quá trình chuyển instance thành dict.
 4. to_internal_value(self, data)
-Dùng cho: Tùy biến quá trình chuyển dữ liệu đầu vào thành object.
+   Dùng cho: Tùy biến quá trình chuyển dữ liệu đầu vào thành object.
 5. validate(self, attrs)
-Dùng cho: Validate liên trường (cross-field validation).
-Chức năng: Kiểm tra logic liên quan đến nhiều trường cùng lúc.
-Tổng kết các prefix tự động trong DRF serializers:
-Prefix/Hàm	Tác dụng tự động với trường
-get_<field_name>	Cho SerializerMethodField
-validate_<field_name>	Validate từng trường
-validate	Validate nhiều trường cùng lúc
-to_representation	Tùy biến dữ liệu trả về
-to_internal_value	Tùy biến dữ liệu đầu vào
-Lưu ý:
-Các prefix này là quy ước của DRF, chỉ cần đặt đúng tên, DRF sẽ tự động gọi khi cần thiết.
-Ngoài ra, các hàm như create, update cũng được DRF tự động gọi khi thực hiện thao tác tương ứng.
+   Dùng cho: Validate liên trường (cross-field validation).
+   Chức năng: Kiểm tra logic liên quan đến nhiều trường cùng lúc.
+   Tổng kết các prefix tự động trong DRF serializers:
+   Prefix/Hàm Tác dụng tự động với trường
+   get*<field_name> Cho SerializerMethodField
+   validate*<field_name> Validate từng trường
+   validate Validate nhiều trường cùng lúc
+   to_representation Tùy biến dữ liệu trả về
+   to_internal_value Tùy biến dữ liệu đầu vào
+   Lưu ý:
+   Các prefix này là quy ước của DRF, chỉ cần đặt đúng tên, DRF sẽ tự động gọi khi cần thiết.
+   Ngoài ra, các hàm như create, update cũng được DRF tự động gọi khi thực hiện thao tác tương ứng.
 
 Cách sử dụng dấu gạch dưới trong truy vấn
 a. Truy vấn qua ForeignKey
 Giả sử:
 Lấy tất cả user thuộc phòng ban tên là "IT":
+User.objects.filter(department**name="IT")
 (department là ForeignKey, name là trường của Department)
 b. Truy vấn qua ManyToManyField
 Giả sử:
+class Department(models.Model):
+members = models.ManyToManyField(User, related_name='departments')
 Lấy tất cả user là thành viên của phòng ban có id=1:
+User.objects.filter(departments**id=1)
 (departments là related_name của ManyToManyField)
 c. Truy vấn lồng nhiều cấp
 Lấy tất cả user thuộc phòng ban có lead là user có id=5:
+User.objects.filter(departments**lead**id=5)
 (departments → lead → id)
 d. Truy vấn ngược (related_name)
 Nếu bạn có related_name, bạn có thể truy vấn ngược lại:
-(members là related_name của ManyToManyField)
-3. Một số ví dụ thực tế
+Department.objects.filter(members**username='alice')
+(members là related_name của ManyToManyField) 3. Một số ví dụ thực tế
 Lấy tất cả nhân viên thuộc các phòng ban mà user là lead:
+lead_departments = user.lead_departments.all()
+User.objects.filter(departments**in=lead_departments).distinct()
 departments là related_name của ManyToManyField members trong Department.
 lead_departments là related_name của ManyToManyField lead trong Department.
 Lấy tất cả đơn nghỉ phép của nhân viên thuộc các phòng ban mà user là lead:
-4. Tóm tắt quy tắc
-modelA__fieldB__fieldC=...: Truy vấn từ model hiện tại sang modelA, rồi sang fieldB, rồi sang fieldC.
+LeaveRequest.objects.filter(employee**departments**in=lead_departments).distinct() 4. Tóm tắt quy tắc
+modelA**fieldB**fieldC=...: Truy vấn từ model hiện tại sang modelA, rồi sang fieldB, rồi sang fieldC.
 Dùng related_name để truy vấn ngược.
 Dùng .distinct() khi có thể bị trùng kết quả do nhiều mối quan hệ.
+
+Trong Django ORM (và DRF), các trường thể hiện mối quan hệ giữa các model là:
+
+1. ForeignKey
+   Mối quan hệ: Nhiều-1 (Many-to-One)
+   Ý nghĩa: Một bản ghi của model này liên kết với một bản ghi của model khác.
+   Ví dụ:
+   class Department(models.Model):
+   name = models.CharField(max_length=100)
+
+class User(models.Model):
+department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True)
+Một user chỉ thuộc một phòng ban, nhưng một phòng ban có nhiều user. 2. OneToOneField
+Mối quan hệ: 1-1 (One-to-One)
+Ý nghĩa: Một bản ghi của model này liên kết duy nhất với một bản ghi của model khác.
+Ví dụ:
+class Profile(models.Model):
+user = models.OneToOneField(User, on_delete=models.CASCADE)
+bio = models.TextField()Một user chỉ có một profile, một profile chỉ thuộc về một user. 3. ManyToManyField
+Mối quan hệ: Nhiều-Nhiều (Many-to-Many)
+Ý nghĩa: Một bản ghi của model này có thể liên kết với nhiều bản ghi của model khác và ngược lại.
+Ví dụ:
+class Department(models.Model):
+name = models.CharField(max_length=100)
+members = models.ManyToManyField(User, related_name='departments')Một phòng ban có nhiều thành viên, một user có thể thuộc nhiều phòng ban. 4. related_name
+Ý nghĩa: Đặt tên cho mối quan hệ ngược lại (reverse relation).
+Ví dụ:
+class Department(models.Model):
+members = models.ManyToManyField(User, related_name='departments')Truy vấn ngược: user.departments.all() để lấy tất cả phòng ban mà user là thành viên. 5. Sử dụng trong DRF Serializer
+ForeignKey:
+serializers.PrimaryKeyRelatedField, serializers.StringRelatedField, hoặc nested serializer.
+ManyToManyField:
+serializers.PrimaryKeyRelatedField(many=True), hoặc nested serializer với many=True.
+OneToOneField:
+Thường dùng nested serializer.
+Ví dụ:
+class UserSerializer(serializers.ModelSerializer):
+department = DepartmentSerializer() # nested
+class Meta:
+model = User
+fields = ['id', 'username', 'department'] 6. Tóm tắt
+Trường Mối quan hệ Ý nghĩa
+ForeignKey Nhiều-1 Một bản ghi liên kết một bản ghi
+OneToOneField 1-1 Một bản ghi liên kết một bản ghi
+ManyToManyField Nhiều-Nhiều Nhiều bản ghi liên kết nhiều bản ghi

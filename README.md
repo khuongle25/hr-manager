@@ -249,6 +249,7 @@ python manage.py createsuperuser
 # Chạy development server
 python manage.py runserver
 ```
+uvicorn ai_backend:app --reload --port 9000
 
 Bạn có thể đăng nhập bằng các tài khoản sau để kiểm tra phân quyền và giao diện:
 HR Manager: hr_manager / password123

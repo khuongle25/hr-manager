@@ -36,14 +36,13 @@ LOCAL_APPS = [
     'apps.users',
     'apps.leave_management',
     'apps.departments',
-    'apps.ai_agents',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = True  # hoặc CORS_ALLOWED_ORIGINS = ['http://localhost:3000']
-CSRF_TRUSTED_ORIGINS = ['http://localhost:3000']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:3000', 'http://localhost:9000']
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
