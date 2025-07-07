@@ -4,9 +4,59 @@ import re
 import unicodedata
 from schema_registry import schema_registry
 from typing import Dict, List, Optional, Any, Union
-
+# ⭐ IMPORT LANGGRAPH WORKFLOW
+from langgraph_approval_workflow import create_complex_approval_workflow
+import os
 
 API_BASE = "http://localhost:8000/api"
+
+# ⭐ KHỞI TẠO LANGGRAPH WORKFLOW
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAy1zLhUYfX-B_r71zENYncn18vJDp0V5k")
+complex_workflow = None
+
+def get_complex_workflow():
+    """Lazy initialization của complex workflow"""
+    global complex_workflow
+    if complex_workflow is None:
+        complex_workflow = create_complex_approval_workflow(GEMINI_API_KEY)
+    return complex_workflow
+
+def should_use_complex_approval(intent: str, entities: Dict, user_role: str, user_input: str) -> bool:
+    """Quyết định có nên dùng LangGraph complex workflow không"""
+    
+    # Chỉ dùng cho approve/deny
+    if intent not in ["approve_leave", "deny_leave"]:
+        return False
+    
+    # Các trigger words cho complex processing
+    complex_triggers = [
+        "team lead", "trưởng phòng", "leadership", 
+        "cuối năm", "end of year", "december",
+        "overlap", "conflict", "cùng lúc", "đồng thời",
+        "critical", "quan trọng", "khẩn cấp", "deadline",
+        "nhiều người", "team", "department"
+    ]
+    
+    # Check user message có trigger words không
+    user_input_lower = user_input.lower()
+    has_trigger = any(trigger in user_input_lower for trigger in complex_triggers)
+    
+    # ⭐ CHỈ DÙng COMPLEX KHI:
+    # 1. Có trigger words rõ ràng HOẶC
+    # 2. User là HR (có authority cao nhất) VÀ có signs phức tạp
+    
+    use_complex = False
+    
+    if has_trigger:
+        use_complex = True
+        print(f"🎯 Complex workflow: Trigger words detected")
+    elif user_role == "hr" and len(user_input.split()) > 8:  # HR + long complex message
+        use_complex = True  
+        print(f"🎯 Complex workflow: HR with detailed request")
+    
+    print(f"🤔 Complex workflow check: has_trigger={has_trigger}, user_role={user_role}, use_complex={use_complex}")
+    
+    return use_complex
 
 def get_role_from_token(token):
     """Lấy role từ token"""
@@ -452,8 +502,67 @@ def call_api(intent, entities, user_token, user_role=None, user_message_input=No
             "result": {}, 
             "user_message": f"❌ Bạn không có quyền thực hiện chức năng này. Cần quyền: {', '.join(allowed_roles)}"
         }
+    
+    # ⭐ 7.5. LANGGRAPH COMPLEX WORKFLOW CHECK (BEFORE SMART LOGIC)
+    if should_use_complex_approval(intent, entities, user_role, user_message_input or ""):
+        # Nếu có leave_request_id rồi thì dùng complex workflow
+        if entities.get("leave_request_id"):
+            print("🎯 Using LangGraph Complex Approval Workflow...")
             
-    # ⭐ 8. SMART LOGIC TRƯỚC VALIDATION (di chuyển lên đây)
+            # Chuẩn bị state cho LangGraph
+            from langgraph_approval_workflow import ComplexApprovalState
+            
+            # Get current user info
+            current_user_info = get_current_user_info(user_token)
+            user_id = current_user_info.get("id") if current_user_info else None
+            
+            complex_state = {
+                "user_input": user_message_input or f"{intent} leave request {entities.get('leave_request_id')}",
+                "user_id": user_id,
+                "user_role": user_role,
+                "user_token": user_token,
+                "intent": intent,
+                "entities": entities,
+                # Initialize empty lists for annotations
+                "conflicts": [],
+                "risks": [],
+                "business_rules_triggered": [],
+                "api_calls": [],
+                # Initialize other fields
+                "leave_request": None,
+                "employee_context": None,
+                "team_context": None,
+                "department_context": None,
+                "risk_score": 0,
+                "requires_escalation": False,
+                "escalation_reason": "",
+                "recommended_action": "",
+                "user_message": "",
+                "execution_result": {}
+            }
+            
+            try:
+                workflow = get_complex_workflow()
+                result_state = workflow.execute(complex_state)
+                
+                return {
+                    "result": result_state.get("execution_result", {}),
+                    "user_message": result_state.get("user_message", "Complex workflow completed"),
+                    "workflow_used": "langgraph_complex",
+                    "risk_assessment": {
+                        "risk_score": result_state.get("risk_score", 0),
+                        "conflicts": result_state.get("conflicts", []),
+                        "risks": result_state.get("risks", []),
+                        "business_rules": result_state.get("business_rules_triggered", [])
+                    }
+                }
+                
+            except Exception as e:
+                print(f"❌ LangGraph workflow error: {e}")
+                # Fallback to simple logic nếu có lỗi
+                print("🔄 Falling back to simple approval logic...")
+            
+    # 8. SMART LOGIC TRƯỚC VALIDATION (di chuyển lên đây)
     headers = {"Authorization": f"Bearer {user_token}"}
     smart_result = smart_approve_deny_logic(intent, entities, user_token, user_role)
     if smart_result:
