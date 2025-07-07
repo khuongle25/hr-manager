@@ -3,7 +3,7 @@ from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 from .models import Department
 from .serializers import DepartmentSerializer
-from apps.users.permissions import IsHRUser
+from apps.users.permissions import IsHRUser, IsTeamLeadUser
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
@@ -13,7 +13,18 @@ from django.core.cache import cache
 class DepartmentViewSet(viewsets.ModelViewSet):
     queryset = Department.objects.all()
     serializer_class = DepartmentSerializer
-    permission_classes = [IsAuthenticated, IsHRUser]  # Chỉ HR mới được quản lý phòng ban
+    permission_classes = [IsAuthenticated, IsTeamLeadUser]  # ⭐ Cho phép HR và Team Lead đọc
+    
+    def get_permissions(self):
+        """Override permission cho từng action"""
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'assign_lead']:
+            # Chỉ HR mới được tạo/sửa/xóa
+            permission_classes = [IsAuthenticated, IsHRUser]
+        else:
+            # Team Lead được đọc danh sách departments
+            permission_classes = [IsAuthenticated, IsTeamLeadUser]
+        
+        return [permission() for permission in permission_classes]
     
     def get_queryset(self):
         user = self.request.user

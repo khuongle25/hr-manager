@@ -55,26 +55,61 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         except LeaveBalance.DoesNotExist:
             return False
 
+    def _needs_both_approvals(self, leave):
+        """
+        Kiểm tra xem đơn nghỉ phép có cần cả Team Lead và HR duyệt không
+        - Nếu employee là Team Lead → chỉ cần HR duyệt
+        - Nếu employee là Employee thường → cần cả Team Lead và HR duyệt
+        """
+        return leave.employee.role != 'team_lead'
+
+    def _is_fully_approved(self, leave):
+        """Kiểm tra xem đơn đã được duyệt đầy đủ chưa"""
+        if self._needs_both_approvals(leave):
+            # Employee thường: cần cả team_lead và hr approved
+            return leave.team_lead_status == 'approved' and leave.hr_status == 'approved'
+        else:
+            # Team Lead: chỉ cần hr approved
+            return leave.hr_status == 'approved'
+
+    def _is_denied(self, leave):
+        """Kiểm tra xem đơn có bị từ chối không"""
+        if self._needs_both_approvals(leave):
+            # Employee thường: một trong hai từ chối là denied
+            return leave.team_lead_status == 'denied' or leave.hr_status == 'denied'
+        else:
+            # Team Lead: chỉ xét hr_status
+            return leave.hr_status == 'denied'
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         leave = self.get_object()
         user = request.user
+        
         # Kiểm tra quyền duyệt
         if user.role not in ['hr', 'team_lead']:
             return Response({'detail': 'Bạn không có quyền duyệt đơn.'}, status=403)
+        
+        # ⭐ NGĂN TEAM LEAD TỰ DUYỆT ĐƠN CỦA MÌNH
+        if user.role == 'team_lead' and leave.employee == user:
+            return Response({'detail': 'Bạn không thể tự duyệt đơn nghỉ phép của chính mình.'}, status=403)
+        
         # Team Lead chỉ duyệt được đơn của nhân viên trong team
         if user.role == 'team_lead' and not leave.employee.departments.filter(lead=user).exists():
             return Response({'detail': 'Bạn chỉ có thể duyệt đơn của nhân viên trong team.'}, status=403)
+        
         # Nếu đã duyệt rồi thì không làm gì
         if (user.role == 'team_lead' and leave.team_lead_status == 'approved') or (user.role == 'hr' and leave.hr_status == 'approved'):
             return Response({'detail': 'Bạn đã duyệt đơn này trước đó.'}, status=400)
+        
         # Cập nhật trạng thái duyệt riêng
         if user.role == 'team_lead':
             leave.team_lead_status = 'approved'
         if user.role == 'hr':
             leave.hr_status = 'approved'
-        # Nếu cả hai đã duyệt thì mới set status=approved
-        if leave.team_lead_status == 'approved' and leave.hr_status == 'approved':
+        
+        # ⭐ SỬ DỤNG HELPER METHOD ĐỂ KIỂM TRA APPROVAL
+        if self._is_fully_approved(leave):
             # Kiểm tra đủ ngày phép không (chỉ khi chuyển từ pending)
             num_days = self._calculate_leave_days(leave)
             try:
@@ -83,13 +118,23 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
                     return Response({'detail': f'Không đủ ngày phép. Còn lại: {balance.balance} ngày.'}, status=400)
             except LeaveBalance.DoesNotExist:
                 return Response({'detail': 'Không tìm thấy LeaveBalance cho nhân viên này.'}, status=400)
+            
             if leave.status == 'pending':
                 if not self._update_leave_balance(leave, 'subtract'):
                     return Response({'detail': 'Lỗi khi cập nhật ngày phép.'}, status=400)
+            
             leave.status = 'approved'
             leave.approver = user
+        
         leave.save()
-        return Response({'status': 'Đã duyệt đơn. Trạng thái hiện tại: team_lead: %s, hr: %s, tổng: %s' % (leave.team_lead_status, leave.hr_status, leave.status)})
+        
+        # Thông báo động dựa trên role của employee
+        if leave.employee.role == 'team_lead':
+            status_msg = f'Đã duyệt đơn Team Lead. HR: {leave.hr_status}, Tổng: {leave.status}'
+        else:
+            status_msg = f'Đã duyệt đơn. Team Lead: {leave.team_lead_status}, HR: {leave.hr_status}, Tổng: {leave.status}'
+        
+        return Response({'status': status_msg})
 
     @action(detail=True, methods=['post'])
     def deny(self, request, pk=None):
@@ -98,26 +143,42 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         # Kiểm tra quyền từ chối
         if user.role not in ['hr', 'team_lead']:
             return Response({'detail': 'Bạn không có quyền từ chối đơn.'}, status=403)
+        
+        # ⭐ NGĂN TEAM LEAD TỰ TỪ CHỐI ĐƠN CỦA MÌNH
+        if user.role == 'team_lead' and leave.employee == user:
+            return Response({'detail': 'Bạn không thể tự từ chối đơn nghỉ phép của chính mình.'}, status=403)
+        
         # Team Lead chỉ từ chối được đơn của nhân viên trong team
         if user.role == 'team_lead' and not leave.employee.departments.filter(lead=user).exists():
             return Response({'detail': 'Bạn chỉ có thể từ chối đơn của nhân viên trong team.'}, status=403)
+        
         # Nếu đã từ chối rồi thì không làm gì
         if (user.role == 'team_lead' and leave.team_lead_status == 'denied') or (user.role == 'hr' and leave.hr_status == 'denied'):
             return Response({'detail': 'Bạn đã từ chối đơn này trước đó.'}, status=400)
+        
         # Cập nhật trạng thái từ chối riêng
         if user.role == 'team_lead':
             leave.team_lead_status = 'denied'
         if user.role == 'hr':
             leave.hr_status = 'denied'
-        # Nếu một trong hai từ chối thì set status=denied và hoàn lại ngày phép nếu đã approved trước đó
-        if leave.team_lead_status == 'denied' or leave.hr_status == 'denied':
+        
+        # ⭐ SỬ DỤNG HELPER METHOD ĐỂ KIỂM TRA DENIAL
+        if self._is_denied(leave):
             if leave.status == 'approved':
                 if not self._update_leave_balance(leave, 'add'):
                     return Response({'detail': 'Lỗi khi hoàn lại ngày phép.'}, status=400)
             leave.status = 'denied'
             leave.approver = user
+        
         leave.save()
-        return Response({'status': 'Đã từ chối đơn. Trạng thái hiện tại: team_lead: %s, hr: %s, tổng: %s' % (leave.team_lead_status, leave.hr_status, leave.status)})
+        
+        # Thông báo động dựa trên role của employee
+        if leave.employee.role == 'team_lead':
+            status_msg = f'Đã từ chối đơn Team Lead. HR: {leave.hr_status}, Tổng: {leave.status}'
+        else:
+            status_msg = f'Đã từ chối đơn. Team Lead: {leave.team_lead_status}, HR: {leave.hr_status}, Tổng: {leave.status}'
+        
+        return Response({'status': status_msg})
 
     @action(detail=True, methods=['post'])
     def change_decision(self, request, pk=None):
@@ -125,26 +186,35 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         leave = self.get_object()
         user = request.user
         new_status = request.data.get('status')
+        
         # Kiểm tra quyền
         if user.role not in ['hr', 'team_lead']:
             return Response({'detail': 'Bạn không có quyền thay đổi quyết định.'}, status=403)
+        
+        # ⭐ NGĂN TEAM LEAD TỰ THAY ĐỔI ĐƠN CỦA MÌNH
+        if user.role == 'team_lead' and leave.employee == user:
+            return Response({'detail': 'Bạn không thể tự thay đổi quyết định đơn nghỉ phép của chính mình.'}, status=403)
+        
         if user.role == 'team_lead' and not leave.employee.departments.filter(lead=user).exists():
             return Response({'detail': 'Bạn chỉ có thể thay đổi đơn của nhân viên trong team.'}, status=403)
+        
         if new_status not in ['approved', 'denied']:
             return Response({'detail': 'Trạng thái không hợp lệ.'}, status=400)
+        
         # Cập nhật trạng thái riêng
         if user.role == 'team_lead':
             leave.team_lead_status = new_status
         if user.role == 'hr':
             leave.hr_status = new_status
-        # Cập nhật trạng thái tổng hợp
-        if leave.team_lead_status == 'denied' or leave.hr_status == 'denied':
+        
+        # ⭐ SỬ DỤNG HELPER METHODS ĐỂ XÁC ĐỊNH TRẠNG THÁI TỔNG HỢP
+        if self._is_denied(leave):
             if leave.status == 'approved':
                 if not self._update_leave_balance(leave, 'add'):
                     return Response({'detail': 'Lỗi khi hoàn lại ngày phép.'}, status=400)
             leave.status = 'denied'
             leave.approver = user
-        elif leave.team_lead_status == 'approved' and leave.hr_status == 'approved':
+        elif self._is_fully_approved(leave):
             # Kiểm tra đủ ngày phép không (chỉ khi chuyển từ pending)
             num_days = self._calculate_leave_days(leave)
             try:
@@ -153,6 +223,7 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
                     return Response({'detail': f'Không đủ ngày phép. Còn lại: {balance.balance} ngày.'}, status=400)
             except LeaveBalance.DoesNotExist:
                 return Response({'detail': 'Không tìm thấy LeaveBalance cho nhân viên này.'}, status=400)
+            
             if leave.status == 'pending':
                 if not self._update_leave_balance(leave, 'subtract'):
                     return Response({'detail': 'Lỗi khi cập nhật ngày phép.'}, status=400)
@@ -161,10 +232,16 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         else:
             leave.status = 'pending'
             leave.approver = None
+        
         leave.save()
-        return Response({
-            'status': f'Đã thay đổi quyết định. team_lead: {leave.team_lead_status}, hr: {leave.hr_status}, tổng: {leave.status}'
-        })
+        
+        # Thông báo động dựa trên role của employee
+        if leave.employee.role == 'team_lead':
+            status_msg = f'Đã thay đổi quyết định Team Lead. HR: {leave.hr_status}, Tổng: {leave.status}'
+        else:
+            status_msg = f'Đã thay đổi quyết định. Team Lead: {leave.team_lead_status}, HR: {leave.hr_status}, Tổng: {leave.status}'
+        
+        return Response({'status': status_msg})
     
 class LeaveTypeViewSet(viewsets.ModelViewSet):
     queryset = LeaveType.objects.all()
