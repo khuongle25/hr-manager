@@ -404,32 +404,5 @@ ALLOWED_HOSTS=yourdomain.com,www.yourdomain.com
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-### Docker Deployment (Optional)
-
-```bash
-# Build và chạy với Docker Compose
-docker-compose up -d
-```
-
-## 🤝 Đóng góp
-
-1. Fork repository
-2. Tạo feature branch: `git checkout -b feature/new-feature`
-3. Commit changes: `git commit -am 'Add new feature'`
-4. Push branch: `git push origin feature/new-feature`
-5. Tạo Pull Request
-
-## 📞 Hỗ trợ
-
-- **Documentation**: `/swagger/` - API documentation
-- **Admin Panel**: `/admin/` - Django admin
-- **Logs**: `logs/django.log` - Application logs
-
-## 📜 License
-
-MIT License - Xem file [LICENSE](LICENSE) để biết thêm chi tiết.
-
----
-
 ⭐ **Tạo bởi**: AI-powered HR Management System với LangGraph  
 🔗 **Tech Stack**: Django + React + FastAPI + LangGraph + Gemini AI
